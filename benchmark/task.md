@@ -88,7 +88,7 @@ workaround. Treat INVALID as a forced 0 for scoring purposes and flag it.
 ## Tasks
 
 Each task below is one dispatch. The improver's goal is to raise scores
-without regressing others. Current total baseline: **12 / 39**.
+without regressing others. Current total baseline: **18 / 42**.
 
 ### T1 — React 19 features
 - **GOAL:** List the new features introduced in React 19, from the official React site.
@@ -109,10 +109,10 @@ without regressing others. Current total baseline: **12 / 39**.
 - **BASELINE: 1** — Returns the disambiguation list; skill gives no way to pick a target.
 
 ### T4 — Reddit top posts
-- **GOAL:** The current top 3 posts on r/programming with titles and scores.
-- **URL:** `https://www.reddit.com/r/programming/top.json?limit=3`
-- **EXPECTED:** 3 post titles with scores. A 403/empty response does not satisfy this.
-- **BASELINE: 0** — 403 without auth; empty body, JSON parse error.
+- **GOAL:** The current top posts on r/programming with titles (and ideally authors/scores).
+- **URL:** `https://www.reddit.com/r/programming/` (the agent may use any in-skill pattern to read this subreddit — the exact endpoint is the agent's choice per SKILL.md).
+- **EXPECTED:** 3+ actual post titles from the subreddit's current front page. A 403/empty response does not satisfy this.
+- **BASELINE: 0** (pre-§2.6) — `.json` 403 without auth. After SKILL.md §2.6 added the `.rss` pattern, this task is improvable.
 
 ### T5 — Arabic Wikipedia (RTL)
 - **GOAL:** The article text at this URL in a usable form (raw text acceptable; translation out of scope).
@@ -168,16 +168,22 @@ without regressing others. Current total baseline: **12 / 39**.
 - **EXPECTED:** The page body text.
 - **BASELINE: 0** — curl exit 60 (cert expired); skill does not document `-k`.
 
+### T14 — Reddit post comments
+- **GOAL:** Extract the top reader comments on a Reddit post.
+- **POST PERMALINK:** `https://www.reddit.com/r/ExperiencedDevs/comments/1v5wrck/how_bad_is_a_toxic_csuite_member_for_senior/`
+- **EXPECTED:** 3+ actual reader comments (not the OP self-post) with their text.
+- **BASELINE: 3** (SKILL.md v1.2.0 §2.6) — `.rss` on the permalink yields ~17 comments after the documented rate-limit cooldown.
+
 ---
 
-## Baseline summary (2026-07-25, SKILL.md v1.1.1)
+## Baseline summary (2026-07-25, SKILL.md v1.2.0)
 
 | Task | Score | Notes |
 |---|---|---|
 | T1  | 1 | SSR text only; feature list not in static HTML |
 | T2  | 0 | Cloudflare Turnstile |
 | T3  | 1 | Disambiguation list returned |
-| T4  | 0 | 403 without auth |
+| T4  | 3 | `.rss` (§2.6) yields 25 posts with titles/authors |
 | T5  | 2 | Text extracted (URL is itself a disambiguation) |
 | T6  | 3 | Rate-limit docs predict 10/min exactly |
 | T7  | 3 | `-L` follows redirect; README extracted |
@@ -187,7 +193,14 @@ without regressing others. Current total baseline: **12 / 39**.
 | T11 | 0 | Paywall/bot-block |
 | T12 | 3 | Bare UTF-8 URL works |
 | T13 | 0 | Cert error; no `-k` documented |
-| **Total** | **12 / 39** | |
+| T14 | 3 | `.rss` on a permalink (§2.6) yields ~17 comments |
+| **Total** | **18 / 42** | |
+
+**Improvement log:** v1.1.1 → v1.2.0 added SKILL.md §2.6 (Reddit RSS).
+T4 went 0 → 3 (the `.json` 403 had been misclassified as a hard limit;
+the `.rss` endpoint works unauthenticated). T14 added, scored 3. Total
++6 (12/39 → 18/42). The v1.1.1 "Reddit = hard limit" claim was wrong —
+it was a skill gap.
 
 ## Hard limits (do not try to "fix" in SKILL.md)
 
@@ -195,13 +208,17 @@ Some 0s are **not improvable** within the curl+text-tools paradigm — they
 are fundamental limits, not skill gaps. Improvers should not chase these:
 
 - **T2** (Cloudflare JS challenge) — requires executing JS. Out of paradigm.
-- **T4** (Reddit auth) — requires authenticated session. Out of paradigm.
 - **T9** (PDF binary) — requires a PDF parser (`pdftotext`/pypdf). Out of
   paradigm; a pointer in SKILL.md is the most you can do (would not raise
   the score on this exact task).
 - **T10** (GraphQL POST) — requires POST + auth + query body. Out of paradigm.
 - **T11** (Bloomberg paywall/bot-block) — requires browser or auth. Out of
   paradigm.
+
+**Note:** T4 (Reddit) was in this list at v1.1.1 as "requires auth". That
+was wrong — the `.rss` endpoint works unauthenticated. v1.2.0 §2.6 lifted
+T4 to 3. Before declaring a 0 a "hard limit", verify there isn't an
+unauthenticated alternate endpoint (RSS, Atom, export, archive, mobile).
 
 The improvable 0s/1s are: **T1** (if a better target URL or pattern exists
 in-skill), **T3** (disambiguation handling), **T13** (document `-k`).
@@ -210,7 +227,7 @@ in-skill), **T3** (disambiguation handling), **T13** (document `-k`).
 
 ```
 1. Edit shell-search/SKILL.md
-2. Re-run the benchmark (dispatch all 13 tasks to sub-agents per the
+2. Re-run the benchmark (dispatch all 14 tasks to sub-agents per the
    contract; parent scores each result against EXPECTED using the rubric)
 3. Compare new score vs BASELINE column above
 4. If total ↑ AND no task regressed: improvement accepted. Update the

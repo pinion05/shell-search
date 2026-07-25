@@ -36,7 +36,7 @@ curl -sL https://raw.githubusercontent.com/pinion05/shell-search/main/shell-sear
 ```
 shell-search/
 ├── shell-search/
-│   └── SKILL.md      # The skill definition (v1.1.1) — users use this
+│   └── SKILL.md      # The skill definition (v1.2.0) — users use this
 ├── benchmark/
 │   └── task.md       # Iterative improvement tool for SKILL.md (improvers)
 ├── README.md
@@ -120,7 +120,7 @@ you can edit `shell-search/SKILL.md`, re-run, and verify the change helped.
 - **Users** can ignore `benchmark/` entirely — `shell-search/SKILL.md` is
   all you need.
 - **Improvers** run `benchmark/task.md` against their changes: the current
-  baseline is **12 / 39**. A change is an improvement if the total goes up
+  baseline is **18 / 42**. A change is an improvement if the total goes up
   *and* no task regresses.
 
 `benchmark/task.md` is a single self-contained file: the tasks, the

@@ -8,7 +8,7 @@ description: >-
   research is needed. Covers Wikipedia scraping, GitHub API queries, REST API
   consumption, multi-language comparison, and HTML table parsing.
 metadata:
-  version: "1.1.1"
+  version: "1.2.0"
 ---
 
 # Shell Search — Web Research from the Terminal
@@ -262,6 +262,65 @@ curl -sL "https://raw.githubusercontent.com/mxyhi/ok-skills/main/exa-search/SKIL
 **Hard-won lesson:** `raw.githubusercontent.com` returns raw file content with
 zero HTML wrapper. Much cleaner than scraping the GitHub web UI.
 
+### 2.6 Reddit — RSS Feeds (Posts & Comments)
+
+Reddit's `.json` endpoints now require OAuth — `curl` gets `403`. But the
+`.rss` (Atom XML) feeds still work unauthenticated and parse cleanly. Use
+these instead of `.json`.
+
+**Subreddit posts:**
+```bash
+curl -sL -H "User-Agent: research-script/1.0" "https://www.reddit.com/r/SUBREDDIT/.rss" \
+  | python3 -c "
+import sys, re, html, xml.etree.ElementTree as ET
+ns = {'a': 'http://www.w3.org/2005/Atom'}
+root = ET.fromstring(sys.stdin.read())
+for e in root.findall('a:entry', ns):
+    title = (e.find('a:title', ns).text or '').strip()
+    author_el = e.find('a:author/a:name', ns)
+    author = author_el.text if author_el is not None else '?'
+    print(f'{author}: {title}')
+"
+```
+
+**Post comments** — append `.rss` to the post's permalink:
+```bash
+curl -sL -H "User-Agent: research-script/1.0" \
+  "https://www.reddit.com/r/SUBREDDIT/comments/POSTID/POST_TITLE/.rss" \
+  | python3 -c "
+import sys, re, html, xml.etree.ElementTree as ET
+ns = {'a': 'http://www.w3.org/2005/Atom'}
+root = ET.fromstring(sys.stdin.read())
+for e in root.findall('a:entry', ns):
+    author_el = e.find('a:author/a:name', ns)
+    author = author_el.text if author_el is not None else '?'
+    content_el = e.find('a:content', ns)
+    content_html = content_el.text if content_el is not None else ''
+    text = html.unescape(re.sub(r'<[^>]+>', '', content_html)).strip()
+    if text and 'submitted by' not in text:  # skip the OP entry
+        print(f'{author}: {text[:200]}')
+"
+```
+
+**URL pattern:** take any `https://www.reddit.com/r/X/comments/Y/title/`
+permalink and add `.rss` at the end.
+
+**Hard-won lessons:**
+- **`.json` is dead, `.rss` is alive.** Reddit gated `.json` behind OAuth;
+  `.rss` still works without auth. Verify with `curl -sL -o /dev/null
+  -w "%{http_code}"` — `200` for RSS, `403` for `.json`.
+- **Rate limit is real (~per-IP).** Rapid back-to-back `.rss` calls get
+  `429`. Space calls ~60–90s apart, or one feed at a time. The
+  User-Agent matters — a generic `Mozilla/5.0` is more likely to be
+  blocked than a descriptive custom one.
+- **Comments feed is partial.** A thread's `.rss` returns the first page
+  of comments (~10–25), not every reply. For exhaustive comment trees you
+  need the authenticated API — out of scope for this skill.
+- **Skip the OP entry.** The comments feed's first `<entry>` is the post
+  itself (its `content` starts with "submitted by"); filter it as shown.
+- **Some `<content>` fields are empty** (deleted/removed comments). Guard
+  with `content_el.text or ''` — bare `.text` raises `AttributeError`.
+
 ---
 
 ## Phase 3: Advanced Strategies
@@ -481,6 +540,25 @@ print('core', str(c.get('remaining'))+'/'+str(c.get('limit')),
 
 # ═══ GitHub Raw File ═══
 curl -sL "https://raw.githubusercontent.com/OWNER/REPO/main/PATH" | head -80
+
+# ═══ Reddit Subreddit Posts (.rss — .json is 403 without OAuth) ═══
+curl -sL -H "User-Agent: research-script/1.0" "https://www.reddit.com/r/SUBREDDIT/.rss" \
+  | python3 -c "
+import sys, html, xml.etree.ElementTree as ET
+ns = {'a': 'http://www.w3.org/2005/Atom'}
+for e in ET.fromstring(sys.stdin.read()).findall('a:entry', ns):
+    a = e.find('a:author/a:name', ns)
+    print((a.text if a is not None else '?') + ': ' + (e.find('a:title', ns).text or ''))"
+
+# ═══ Reddit Post Comments (append .rss to permalink) ═══
+curl -sL -H "User-Agent: research-script/1.0" "https://www.reddit.com/r/X/comments/Y/Z/.rss" \
+  | python3 -c "
+import sys, re, html, xml.etree.ElementTree as ET
+ns = {'a': 'http://www.w3.org/2005/Atom'}
+for e in ET.fromstring(sys.stdin.read()).findall('a:entry', ns):
+    a = e.find('a:author/a:name', ns); c = e.find('a:content', ns)
+    t = html.unescape(re.sub(r'<[^>]+>', '', c.text or '')).strip()
+    if t and 'submitted by' not in t: print((a.text if a is not None else '?') + ': ' + t[:200])"
 
 # ═══ Generic Web Page (multiline-aware) ═══
 curl -sL -H "User-Agent: Mozilla/5.0" "https://example.com/page" \
