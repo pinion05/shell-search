@@ -63,7 +63,9 @@ curl -sL "https://en.wikipedia.org/w/api.php?action=query&titles=TOPIC&prop=extr
 curl -sL "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=QUERY&format=json" | python3 -c "
 import sys,json,re,html
 d=json.load(sys.stdin); r=d.get('query',{}).get('search',[])
-if not r: print('ERROR:', d.get('error','(no results)')); raise SystemExit(1)
+if not r:
+    if 'error' in d: print('ERROR:', d['error']); raise SystemExit(1)
+    print('(no results)'); raise SystemExit(0)
 for x in r: print('- '+x['title']+': '+html.unescape(re.sub(r'<[^>]*>','',x['snippet']))[:120])"
 
 # Wikipedia deep dive (HTML + multiline script/style strip + grep + entity decode)
@@ -102,8 +104,10 @@ curl -sL "https://raw.githubusercontent.com/OWNER/REPO/main/PATH" | head -80
 > **Why Python for `<script>`/`<style>` removal?** Real blocks span multiple
 > lines, but `sed` is line-oriented — `sed 's/<script>.*<\/script>//'` only
 > matches single-line blocks and leaks multiline JS/CSS into the output.
-> Python's `re.S` (or `perl -0777` / `sed -z`) reads the whole input as one
-> record so `.` matches newlines.
+> Python's `re.S` (or `perl -0777`) reads the whole input as one record so
+> `.` matches newlines, and `.*?` is non-greedy. Avoid `sed -z`: GNU sed is
+> greedy-only, so multiple `<script>` blocks make it delete all content
+> between the first opening and last closing tag.
 
 ## License
 

@@ -97,10 +97,16 @@ sys.stdout.write(html.unescape(s))
 " | grep -i "키워드" | head -30
 ```
 
-**One-liner alternatives** (no Python) if you prefer: `perl -0777 -pe
-'s/<script.*?<\/script>//gs; s/<style.*?<\/style>//gs'` (slurp mode), or
-GNU `sed -z 's/<script[^>]*>.*<\/script>//g'` (NUL-separated). Both read
-the whole input as one record so `.` matches newlines.
+**One-liner alternative** (no Python): `perl -0777 -pe
+'s/<script.*?<\/script>//gs; s/<style.*?<\/style>//gs'` (slurp mode,
+`.*?` non-greedy, `s` flag = match newlines).
+
+⚠️ **Avoid `sed -z 's/<script[^>]*>.*<\/script>//g'`** — GNU sed is
+greedy-only (no `.*?`), so with multiple `<script>` blocks on a page it
+matches from the *first* opening tag to the *last* closing tag, deleting
+all article content in between. Verified:
+`<script>a</script><main>KEEP</main><script>b</script>` → empty output
+(`KEEP` destroyed). Use Python `.*?` or perl `.*?` (non-greedy) instead.
 
 **Hard-won lesson:** `sed 's/<[^>]*>//g'` removes *tags* but not the *text
 inside* `<script>`/`<style>`. And bare `sed -E 's/<script>.*<\/script>//'`
@@ -108,8 +114,8 @@ inside* `<script>`/`<style>`. And bare `sed -E 's/<script>.*<\/script>//'`
 the JS/CSS body then surfaces as ordinary text after tag removal. Verified
 on `en.wikipedia.org/wiki/Conor_McGregor`: line-oriented `sed` leaks ~235
 lines of `RLCONF`/`function(){...}` that `re.DOTALL` correctly removes.
-Always use a multiline-aware tool (`re.S`, `perl -0777`, or `sed -z`), then
-strip tags, then `grep -v` residual noise.
+Use a multiline-aware, **non-greedy** matcher (`re.S` with `.*?`, or
+`perl -0777` with `.*?`), then strip tags, then `grep -v` residual noise.
 
 ### 1.3 HTML Entity Decoding
 
@@ -379,7 +385,7 @@ grep -iE "activation-synthesis|threat simulation|memory consolidation|Freud|Jung
 | Empty output, `301`/`302` in `-w` | Missing `-L` (no redirect follow) | Always use `curl -sL` |
 | Wrong page silently returned | Redirect not followed | Use `-L`; inspect with `-w "%{http_code} %{url_effective}\n"` |
 | Empty output | Wrong URL encoding | URL-encode special chars; try `--data-urlencode` |
-| Wall of `RLCONF`/CSS noise | multiline `<script>`/`<style>` bodies survive `sed` | Use `re.DOTALL` / `perl -0777` / `sed -z` (§1.2) |
+| Wall of `RLCONF`/CSS noise | multiline `<script>`/`<style>` bodies survive `sed` | Use `re.DOTALL` or `perl -0777` (non-greedy); avoid `sed -z` (§1.2) |
 | `Q&amp;A` / `&#39;` in text | Entities not decoded | `python3 -c "import html..."` (§1.3) |
 | Wall of noise | No `grep -v` filter | Always add noise filter (§1.2) |
 | Table parser returns 0 rows | `<tr>` literal; rows have attributes | Use `<tr[^>]*>` (§3.2) |
@@ -398,8 +404,10 @@ page, not the content. This is the most common silent failure. Use `curl -sL`.
 
 ❌ **`sed` for `<script>`/`<style>` blocks** — Tag-stripping leaves JS/CSS
 bodies as plain text, AND `sed -E 's/<script>.*<\/script>//'` only matches
-single-line blocks (sed is line-oriented). Use a multiline-aware tool:
-`re.DOTALL`, `perl -0777`, or GNU `sed -z`.
+single-line blocks (sed is line-oriented). Worse, `sed -z` is greedy-only:
+with multiple `<script>` blocks it deletes everything from the first opener
+to the last closer, nuking article content. Use a multiline-aware
+**non-greedy** matcher: Python `re.S` with `.*?`, or `perl -0777` with `.*?`.
 
 ❌ **Skipping entity decode** — `&amp;` `&#39;` `&lt;` will corrupt your
 extracted text. Always finish with `html.unescape`.
@@ -440,7 +448,8 @@ curl -sL "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=Q
 import sys,json,re,html
 d=json.load(sys.stdin); r=d.get('query',{}).get('search',[])
 if not r:
-    print('ERROR:', d.get('error','(no results)')); raise SystemExit(1)
+    if 'error' in d: print('ERROR:', d['error']); raise SystemExit(1)
+    print('(no results)'); raise SystemExit(0)
 for x in r: print('- '+x['title']+': '+html.unescape(re.sub(r'<[^>]*>','',x['snippet']))[:120])"
 
 # ═══ Wikipedia Deep Dive (HTML + multiline script/style strip + grep + entity decode) ═══
