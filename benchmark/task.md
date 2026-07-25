@@ -88,7 +88,7 @@ workaround. Treat INVALID as a forced 0 for scoring purposes and flag it.
 ## Tasks
 
 Each task below is one dispatch. The improver's goal is to raise scores
-without regressing others. Current total baseline: **18 / 42**.
+without regressing others. Current total baseline: **24 / 42**.
 
 ### T1 — React 19 features
 - **GOAL:** List the new features introduced in React 19, from the official React site.
@@ -106,7 +106,7 @@ without regressing others. Current total baseline: **18 / 42**.
 - **GOAL:** Give a single clear answer to "what is Mercury?".
 - **URL:** `https://en.wikipedia.org/w/api.php?action=query&titles=Mercury&prop=extracts&exintro&format=json&explaintext`
 - **EXPECTED:** A specific subject (planet / element / mythology / etc.) chosen and described, not a "may refer to" list.
-- **BASELINE: 1** — Returns the disambiguation list; skill gives no way to pick a target.
+- **BASELINE: 3** (SKILL.md v1.3.0 §2.7) — `pageprops` detects the disambiguation page; the §2.7 flow resolves to `Mercury_(planet)` and extracts its intro.
 
 ### T4 — Reddit top posts
 - **GOAL:** The current top posts on r/programming with titles (and ideally authors/scores).
@@ -166,7 +166,7 @@ without regressing others. Current total baseline: **18 / 42**.
 - **GOAL:** The content of the page at this URL.
 - **URL:** `https://expired.badssl.com/`
 - **EXPECTED:** The page body text.
-- **BASELINE: 0** — curl exit 60 (cert expired); skill does not document `-k`.
+- **BASELINE: 3** (SKILL.md v1.2.0 §4.1) — `curl: (60)` now has a documented fix (`-k` for known test endpoints); `curl -skL` retrieves the page body.
 
 ### T14 — Reddit post comments
 - **GOAL:** Extract the top reader comments on a Reddit post.
@@ -176,13 +176,13 @@ without regressing others. Current total baseline: **18 / 42**.
 
 ---
 
-## Baseline summary (2026-07-25, SKILL.md v1.2.0)
+## Baseline summary (2026-07-25, SKILL.md v1.3.0)
 
 | Task | Score | Notes |
 |---|---|---|
 | T1  | 1 | SSR text only; feature list not in static HTML |
 | T2  | 0 | Cloudflare Turnstile |
-| T3  | 1 | Disambiguation list returned |
+| T3  | 3 | `pageprops` detects disambig (§2.7); resolves to `Mercury_(planet)` and extracts |
 | T4  | 3 | `.rss` (§2.6) yields 25 posts with titles/authors |
 | T5  | 2 | Text extracted (URL is itself a disambiguation) |
 | T6  | 3 | Rate-limit docs predict 10/min exactly |
@@ -192,15 +192,14 @@ without regressing others. Current total baseline: **18 / 42**.
 | T10 | 0 | No POST/GraphQL pattern |
 | T11 | 0 | Paywall/bot-block |
 | T12 | 3 | Bare UTF-8 URL works |
-| T13 | 0 | Cert error; no `-k` documented |
+| T13 | 3 | §4.1 documents `-k`; `curl -skL` retrieves the page body |
 | T14 | 3 | `.rss` on a permalink (§2.6) yields ~17 comments |
-| **Total** | **18 / 42** | |
+| **Total** | **24 / 42** | |
 
-**Improvement log:** v1.1.1 → v1.2.0 added SKILL.md §2.6 (Reddit RSS).
-T4 went 0 → 3 (the `.json` 403 had been misclassified as a hard limit;
-the `.rss` endpoint works unauthenticated). T14 added, scored 3. Total
-+6 (12/39 → 18/42). The v1.1.1 "Reddit = hard limit" claim was wrong —
-it was a skill gap.
+**Improvement log:**
+- v1.1.1 → v1.2.0: added §2.6 (Reddit RSS). T4 0 → 3, T14 added (3). 12/39 → 18/42.
+- v1.2.0 → v1.3.0: added §2.7 (disambiguation detection) and §4.1 `-k` row.
+  T3 1 → 3, T13 0 → 3. 18/42 → 24/42.
 
 ## Hard limits (do not try to "fix" in SKILL.md)
 
@@ -221,7 +220,7 @@ T4 to 3. Before declaring a 0 a "hard limit", verify there isn't an
 unauthenticated alternate endpoint (RSS, Atom, export, archive, mobile).
 
 The improvable 0s/1s are: **T1** (if a better target URL or pattern exists
-in-skill), **T3** (disambiguation handling), **T13** (document `-k`).
+in-skill). T3 (disambiguation) and T13 (`-k`) were resolved in v1.3.0.
 
 ## Improver workflow
 
