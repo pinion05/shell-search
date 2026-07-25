@@ -1,0 +1,4 @@
+# results/ contains per-run sub-agent output (regenerated each benchmark run)
+# Keep the directory but ignore its contents.
+results/*
+!results/.gitkeep

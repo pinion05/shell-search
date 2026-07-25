@@ -1,269 +1,225 @@
-# Shell-Search Failure Scenario Catalog
+# Shell-Search Benchmark — Expected Outcomes (for human reviewers)
 
-A benchmark of scenarios where `curl` + Unix text tools **cannot** produce
-correct web research results, even when following the skill's patterns. Each
-scenario was **reproduced live** before classification.
+This file is the **answer key**. It is NOT shown to the sub-agent.
+Each entry documents what a competent reviewer should expect the skill to
+achieve on the matching task in `tasks/`, so the reviewer can judge the
+sub-agent's raw output consistently.
 
-## Why this exists
+**Workflow:**
+1. A sub-agent runs `tasks/F<n>.md` constrained by `PROMPT.md` (skill-only,
+   no improvisation, Bash only).
+2. Its raw response is saved to `results/F<n>.md`.
+3. A human reads this file alongside `results/F<n>.md` and judges:
+   **did the skill's pattern produce usable output for the stated goal?**
 
-The skill teaches you to research the web from the terminal. It's powerful,
-but it has hard limits. This catalog documents those limits honestly so you:
-
-1. **Don't waste time** trying to scrape the unscrapable — recognize the
-   failure mode and switch tools.
-2. **Know when to escalate** to a browser, an authenticated API, or a
-   dedicated parser.
-3. **Have a benchmark** to regression-test future skill versions against.
-
-## Classification
-
-| Class | Meaning | Action |
-|---|---|---|
-| 🔴 **HARD LIMIT** | curl+text-tools fundamentally cannot do this | Switch tool (browser, headless renderer, PDF extractor) |
-| 🟡 **SOFT LIMIT** | Doable with extra steps the skill doesn't cover | Add workaround or use API alternative |
-| ⚪ **OUT OF SCOPE** | Different paradigm (auth, streaming, POST) | Use proper client for that paradigm |
-| 🟢 **HANDLED** | Skill documents this failure | Follow existing guidance |
+Judgment values:
+- ✅ **SUCCESS** — skill produced the requested information
+- ❌ **FAILURE** — skill's pattern broke or yielded nothing usable
+- ⚠️ **PARTIAL** — skill produced something, but incomplete/noisy/wrong-shape
 
 ---
 
-## Scenarios
+## F1 — React 19 features from react.dev
 
-### 🟡 F1 — JavaScript-rendered SPA (partial hydration)
-**Symptom:** `curl` returns a 200 OK HTML shell. Modern SPAs often
-**server-render some content** (marketing copy, nav) for SEO, so stripping
-tags yields *partial* text — but with fingerprints that the rendered page
-lacks whitespace the JS would add: concatenated nav tokens like
-`CtrlKLearnReferenceCommunityBlogReactThe`, and code samples as raw text.
+**Expected: ⚠️ PARTIAL → ❌**
 
-**Repro:**
-```
-curl -sL https://react.dev/ | python3 -c "
-import sys, re
-s = sys.stdin.read()
-s = re.sub(r'<script[^>]*>.*?</script>', '', s, flags=re.S)
-s = re.sub(r'<[^>]*>', '', s)
-stuck = re.findall(r'\b[A-Za-z]*[a-z][A-Z][A-Za-z]{6,}\b', s)
-print(len(stuck), 'concatenated tokens')"
-→ ~10+ concatenated-nav tokens (JS-hydration fingerprint)
-```
+The page is a JS-hydrated SPA. The skill's HTML scraping pattern will return
+a 200 response but the body is mostly a JS bootstrap shell with some
+server-rendered nav/marketing. The agent will get *something* (concatenated
+nav tokens like `CtrlKLearnReferenceBlog`), but **not** the structured list
+of React 19 features the task asks for. Watch for the agent reporting the
+page "loaded" while actually missing the goal.
 
-**Why it's a soft→hard limit:** You get *something*, but interactive content
-(docs body, search results, live data) is hydrated client-side. The extract
-is unreliable as a research source.
-
-**Workaround:** Look for a JSON API the SPA itself calls (browser DevTools →
-Network tab → replay that endpoint with curl), or use a headless browser
-(Playwright/Puppeteer) for the rendered DOM.
+**Why:** React.dev hydrates content client-side. curl cannot execute JS.
+This is a fundamental limit of the curl+text-tools approach.
 
 ---
 
-### 🔴 F2 — Cloudflare / bot-challenge protection
-**Symptom:** HTTP 200, but the page is a "Just a moment..." interstitial
-containing `cf-browser-verification` / `challenge-platform` / `__cf_bm`.
+## F2 — nowsecure.nl article topics
 
-**Repro:** `curl -sL -H "User-Agent: Mozilla/5.0" https://nowsecure.nl/ | grep -c "challenge-platform"`
+**Expected: ❌**
 
-**Why it fails:** The challenge requires running obfuscated JS to compute a
-clearance token. curl cannot execute JS.
+The site is behind Cloudflare's bot-challenge. curl will get a 200 with a
+"Just a moment..." interstitial page containing `cf-browser-verification` /
+`challenge-platform` markers, not the article list. The skill has no
+mechanism to solve the JS challenge.
 
-**Workaround:** None with curl. Options: an authenticated session (cookies
-from a real browser), a challenge-solving service, or a different data source.
-
----
-
-### 🔴 F4 — Login wall / cookie-required content
-**Symptom:** `HTTP 403` with a "Blocked"/"Access denied" page, or a 200 login
-form where content should be.
-
-**Repro:**
-- `curl -sL https://www.reddit.com/r/programming/top.json` → `403 Blocked`
-- `curl -sL https://x.com/elonmusk` → 358 KB login-wall HTML
-
-**Why it fails:** The site gates content behind authentication. curl has no
-session.
-
-**Workaround:** Export cookies from a logged-in browser
-(`cookies.txt` format) and pass `-b cookies.txt`. For Reddit/Twitter prefer
-their official APIs (with auth tokens) over scraping.
+**Why:** Cloudflare requires executing obfuscated JS to compute a clearance
+token. Out of scope for curl.
 
 ---
 
-### 🔴 F9 — PDF / binary document
-**Symptom:** `curl` downloads the bytes fine (`Content-Type: application/pdf`),
-but `sed`/`grep` produce garbage — the content is a compressed binary stream.
+## F3 — "What is Mercury?" via Wikipedia API
 
-**Repro:**
-```
-curl -sL https://arxiv.org/pdf/1706.03762 | sed 's/<[^>]*>//g' | head -c 100
-→ %PDF-1.5
-  137 0 obj
-  stream
-  (binary noise)
-```
+**Expected: ⚠️ PARTIAL**
 
-**Why it fails:** PDF is a binary container. Text tools operate on text.
+The skill's API pattern works mechanically (returns JSON), but "Mercury" is
+ambiguous. The intro extract will be a *disambiguation list* ("Mercury most
+commonly refers to: Mercury (planet)... Mercury (element)..."), not a single
+clear answer. The task asked for "a single clear answer about the most
+prominent subject" — the skill does not teach the agent to detect
+disambiguation pages and pick a target.
 
-**Workaround:** Use a PDF text extractor:
-- `pdftotext file.pdf -` (poppler-utils)
-- `python3 -c "import pypdf; ..."` or `pdfminer.six`
+**Watch for:** the agent quoting the disambiguation list as if it were an
+answer, vs. recognizing it doesn't satisfy "single clear answer."
 
 ---
 
-### 🔴 F12 — Paywall / "are you a robot?"
-**Symptom:** `HTTP 403` or a page saying "Are you a robot?" / "Subscribe to
-continue". Common on Bloomberg, FT, NYT, Medium metered.
+## F4 — Top 3 r/programming posts
 
-**Repro:** `curl -sL https://www.bloomberg.com/` → 403, "Bloomberg - Are you a robot?"
+**Expected: ❌**
 
-**Why it fails:** Publisher-grade bot detection + paywall. No client-side
-content to extract.
+Reddit's `.json` endpoint now requires authentication. Without a token/cookie
+the request returns HTTP 403 with a "Blocked" page. The skill does not cover
+authenticated scraping. The agent should report the failure honestly rather
+than fabricate posts.
 
-**Workaround:** Use the publisher's API if available, or a different source
-for the same fact. Archive.org / archive.today sometimes bypass metering.
-
----
-
-### 🟡 F3 — Wikipedia disambiguation pages
-**Symptom:** A query like "Mercury" is ambiguous (planet? element? god? car?).
-The skill's `intro extract` returns the disambiguation list itself, which
-*might* be what you want, or might not.
-
-**Repro:**
-```
-curl -sL "...api.php?...&titles=Mercury&prop=extracts&exintro..."
-→ "Mercury most commonly refers to: Mercury (planet)... Mercury (element)..."
-```
-
-**Why it's a soft limit:** The API behaves correctly — but the agent has to
-*recognize* it got a disambiguation page and pick a target, rather than
-treating the list as the answer.
-
-**Workaround:** Check for a `disambiguation` page category, or use
-`action=query&titles=X&prop=pageprops` to detect `disambiguation` flag, then
-re-query the specific article.
+**Why:** Reddit gated public JSON access. curl has no session.
 
 ---
 
-### 🟡 F5 — Right-to-left / non-Latin scripts
-**Symptom:** Arabic, Hebrew, Persian Wikipedia content extracts fine
-character-wise, but logical/visual ordering and bidirectional context are
-lost. Output may render garbled when piped through tools that assume LTR.
+## F5 — Arabic Wikipedia article (RTL)
 
-**Repro:** `curl -sL https://ar.wikipedia.org/wiki/مركب` → text extracted but
-directionality metadata gone.
+**Expected: ⚠️ PARTIAL**
 
-**Why it's a soft limit:** The bytes are correct. The *rendering* depends on
-the terminal/consumer applying Unicode bidi.
+The skill's scraping pattern will extract Arabic text successfully (the bytes
+are correct), but bidirectional/directionality context is lost. For a
+"non-Arabic-reader" deliverable, the agent cannot translate (no LLM tool
+allowed — Bash only). The agent will report it extracted text but cannot
+fulfill the "what concept it describes" goal without translation.
 
-**Workaround:** Accept the extracted text as data (search/grep works), but
-don't expect display-perfect output. For clean RTL text, prefer the API
-(`explaintext=1`) over HTML scraping.
+**Watch for:** did the agent stay in scope (report extracted text + admit it
+can't translate) vs. hallucinate a translation?
 
 ---
 
-### ⚪ F10 — GraphQL / POST-only endpoints
-**Symptom:** Modern APIs (GitHub GraphQL, Shopify Admin) require `POST` with
-a JSON body and an auth token. The skill's GET-only patterns don't apply.
+## F6 — 12 rapid GitHub searches (rate limit)
 
-**Repro:** `curl -X POST https://api.github.com/graphql` → `403 rate limit`
-(unauthenticated; even with token, needs `{"query": "..."}` body).
+**Expected: ⚠️ PARTIAL (success rate drops mid-run)**
 
-**Why out of scope:** This is a different request shape, not a parsing
-problem. The skill is about *consuming* responses, not constructing complex
-requests.
+The skill correctly documents GitHub search quota = 10/min unauthenticated.
+Expect ~10 successes then 403s. The agent's count should reflect this. The
+skill's rate-limit guidance **holds up** — this is more a confirmation than
+a failure, but the task does fail partway through.
 
-**Workaround:** Add `-X POST -H "Authorization: ..." -d '{"query":"..."}'`.
-Outside this skill's scope — document in a "next steps" pointer.
+**Watch for:** the agent applying the skill's `/rate_limit` preflight or
+correctly reporting the 10-then-fail pattern, vs. being surprised.
 
 ---
 
-### ⚪ F11 — WebSocket / SSE streaming responses
-**Symptom:** Streaming endpoints (live tickers, chat, logs) hold the
-connection open and emit frames incrementally. `curl | grep` blocks or
-returns immediately without the live data.
+## F7 — `http://` GitHub URL (redirect)
 
-**Repro:** SSE/crypto sockets require a persistent connection and a frame
-parser. curl can fetch the stream but the text-tools pipeline model
-(request → response → process) doesn't fit.
+**Expected: ✅ SUCCESS** *(because the skill mandates `-L`)*
 
-**Why out of scope:** Streaming is a different consumption pattern.
+`http://github.com/...` 301-redirects to HTTPS. The skill's patterns all use
+`curl -sL`, which follows the redirect. The agent should obtain the page
+content. This task exists to confirm the skill's `-L`-everywhere rule works
+under load — it's the skill's strongest correctness point.
 
-**Workaround:** Use `curl -N` (no buffering) into a stateful parser
-(`jq --stream`, a custom Python loop), or use a WebSocket client
-(`websocat`, `websockets.py`).
+**Watch for:** if the agent somehow uses `curl -s` (no `-L`) and gets empty
+output, that's an agent error, not a skill failure.
 
 ---
 
-### 🟢 F6 — Rate limiting (GitHub search 10/min)
-**Handled by skill §2.3 + §4.1.** Verified live: 10 rapid unauthenticated
-`/search/repositories` calls succeeded, the 11th–15th returned 403.
+## F8 — Top 10 HN stories
 
-**The skill already:** prints both `core` and `search` buckets, warns about
-60/hr vs 10/min, and recommends a token for higher limits. ✅
+**Expected: ✅ SUCCESS**
 
----
+HN is server-rendered static HTML. The skill's scraping pattern works here.
+Caveat for the reviewer: HN ships all HTML on one line, so naive `grep -c`
+undercounts, but the skill's `grep -i -B/-A` context patterns work fine.
 
-### 🟢 F7 — Missing `-L` (silent redirect failure)
-**Handled by skill §1.1 + §4.1.** Verified live: `curl -s http://github.com/...`
-returns `301` with no content; `curl -sL` follows to 200.
-
-**The skill already:** mandates `-sL` everywhere, explains it's the #1 silent
-failure, lists it in troubleshooting. ✅
+**Watch for:** the agent obtaining actual story titles (not just counts).
 
 ---
 
-### 🟢 F13 — Non-ASCII (Korean) URLs
-**Handled (works as-is).** Verified live: both bare
-`https://ko.wikipedia.org/wiki/독도` and percent-encoded
-`https://ko.wikipedia.org/wiki/%EB%8F%85%EB%8F%84` return 200.
+## F9 — arXiv PDF text
 
-**The skill already:** mentions URL encoding in §3.1 and notes modern curl
-handles bare UTF-8 paths. ✅
+**Expected: ❌**
 
----
+The URL is a PDF. The skill's `sed`/`grep` patterns produce binary garbage
+(`%PDF-1.5` header, compressed stream noise). The skill does not cover PDF
+extraction — `pdftotext` is mentioned only in this catalog, not in SKILL.md.
+The agent has no SKILL.md-sanctioned way to extract the abstract.
 
-### 🟡 F14 — TLS certificate errors (expired / self-signed)
-**Symptom:** `HTTP 000` and curl refuses to connect:
-`curl: (60) SSL certificate problem: certificate has expired`.
-
-**Repro:**
-```
-curl -sL https://expired.badssl.com/        → HTTP 000 (refused)
-curl -sLk https://expired.badssl.com/       → HTTP 200 (forced)
-```
-
-**Why it's a soft limit:** The skill doesn't mention cert errors. `-k`
-silences them but disables a security check.
-
-**Workaround:** Add `-k` only for known test endpoints; otherwise fix the
-server cert or pin with `--cacert`.
+**Why:** PDF is a binary format. Text tools operate on text.
 
 ---
 
-## Summary table
+## F10 — GitHub GraphQL query
 
-| ID | Scenario | Class | Skill covers? |
-|---|---|---|---|
-| F1 | JS-rendered SPA (partial) | 🟡 SOFT | ❌ |
-| F2 | Cloudflare challenge | 🔴 HARD | ❌ |
-| F4 | Login wall | 🔴 HARD | ❌ (mention cookies) |
-| F9 | PDF binary | 🔴 HARD | ❌ (mention pdftotext) |
-| F12 | Paywall / bot-block | 🔴 HARD | ❌ |
-| F3 | Disambiguation pages | 🟡 SOFT | ❌ |
-| F5 | RTL / non-Latin | 🟡 SOFT | partial |
-| F14 | TLS cert errors | 🟡 SOFT | ❌ |
-| F10 | GraphQL / POST | ⚪ SCOPE | ❌ |
-| F11 | Streaming | ⚪ SCOPE | ❌ |
-| F6 | Rate limit | 🟢 OK | ✅ |
-| F7 | Missing `-L` | 🟢 OK | ✅ |
-| F13 | Non-ASCII URL | 🟢 OK | ✅ |
+**Expected: ❌**
 
-## How to run the live benchmark
+The skill covers GET-based REST API consumption. GraphQL requires POST with
+a JSON body and authentication. The skill has no POST pattern and no GraphQL
+guidance. The agent should report it cannot perform this with the skill's
+patterns (and get a 403/401 unauthenticated).
 
-```bash
-bash benchmarks/run.sh
-```
+**Why:** Different request shape (POST + auth + query language). Out of
+scope for this skill.
 
-The script attempts each scenario live and reports PASS / FAIL / SKIP with
-the observed evidence, so you can regression-test the catalog against
-real-world site behavior.
+---
+
+## F12 — Bloomberg top headlines
+
+**Expected: ❌**
+
+Bloomberg returns 403 with an "Are you a robot?" / paywall page. No
+client-side content to extract. The skill has no paywall bypass.
+
+**Watch for:** the agent reporting the 403 honestly vs. claiming it found
+headlines.
+
+---
+
+## F13 — Korean Wikipedia (bare UTF-8 URL)
+
+**Expected: ✅ SUCCESS**
+
+Modern curl handles bare UTF-8 in URL paths. The skill notes this in §3.1.
+The agent should obtain the article. This task confirms non-ASCII URLs work
+without explicit encoding — a skill strength.
+
+---
+
+## F14 — `expired.badssl.com` (TLS cert error)
+
+**Expected: ❌**
+
+The site's certificate is expired. `curl` refuses to connect (HTTP 000, exit
+non-zero with SSL error). The skill does not document cert errors or the
+`-k` flag. The agent should report the connection failure.
+
+**Watch for:** the agent adding `-k` to force the connection would be
+improvisation beyond the skill — flag as a contract violation, not a success.
+
+---
+
+## Scoring rubric (for the reviewer's final report)
+
+After running all tasks, tally:
+
+| Outcome | Meaning |
+|---|---|
+| ✅ SUCCESS count | Tasks the skill genuinely handles |
+| ❌ FAILURE count | Tasks where the skill's approach fundamentally cannot work |
+| ⚠️ PARTIAL count | Tasks where the skill gets something but not the goal |
+
+The benchmark's purpose is **not** to maximize SUCCESS. It's to honestly
+map where the skill works and where it doesn't, so users know when to
+escalate to a browser/API/different tool. A high FAILURE count on
+hard-limit scenarios (JS SPA, Cloudflare, PDF, paywall) is the *expected,
+correct* finding — those are not solvable in the skill's paradigm.
+
+## Contract violations to watch for
+
+If the sub-agent does any of these, mark the result INVALID (do not score):
+- Uses `WebSearch`, `WebFetch`, a browser, or any non-Bash tool
+- Substitutes a different URL than the one in the task
+- Adds flags/patterns not in SKILL.md (e.g. `-k`, `--resolve`, custom auth)
+- Applies prior knowledge ("I know Reddit blocks this, so...") instead of
+  reporting the observed failure
+- Retries with a "better" approach after the skill's pattern fails
+
+These violate the benchmark's premise: we are measuring the **skill**, not
+the agent.
