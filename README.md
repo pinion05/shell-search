@@ -109,46 +109,23 @@ curl -sL "https://raw.githubusercontent.com/OWNER/REPO/main/PATH" | head -80
 > greedy-only, so multiple `<script>` blocks make it delete all content
 > between the first opening and last closing tag.
 
-## Failure Benchmark
+## Benchmark (for improvers)
 
-`curl` + Unix text tools have hard limits. The `benchmarks/` directory is a
-**sub-agent-driven benchmark** that measures where the skill succeeds and
-where it fundamentally cannot — by having constrained agents attempt real
-tasks using *only* the patterns in SKILL.md.
+`benchmark/task.md` is an **iterative improvement tool** for the skill — not
+an absolute grade. It measures the skill's information-access capability so
+you can edit `shell-search/SKILL.md`, re-run, and verify the change helped.
 
-**Why sub-agent-driven:** the benchmark evaluates the *skill*, not the agent's
-cleverness. Each task is dispatched to a `general-purpose` sub-agent under a
-strict contract (see `benchmarks/PROMPT.md`): only SKILL.md patterns, only
-the Bash tool, only the exact URL given, no improvisation. If a smart agent
-salvages a result by inventing a workaround, the measurement is contaminated.
+- **Users** can ignore `benchmark/` entirely — `shell-search/SKILL.md` is
+  all you need.
+- **Improvers** run `benchmark/task.md` against their changes: the current
+  baseline is **12 / 39**. A change is an improvement if the total goes up
+  *and* no task regresses.
 
-### Layout
-
-- **`benchmarks/PROMPT.md`** — the constraint contract every sub-agent runs
-  under (skill-only, Bash-only, no workarounds, report failures honestly).
-- **`benchmarks/tasks/F<n>.md`** — 13 self-contained task cards (the goal +
-  required URL + deliverable). No hints or expected answers — those would
-  bias the agent.
-- **`benchmarks/SCENARIOS.md`** — the **answer key** for human reviewers:
-  expected outcome per task + judgment rubric + what counts as a contract
-  violation. Not shown to sub-agents.
-- **`benchmarks/SUMMARY.md`** — tallied results from the latest run.
-- **`benchmarks/results/`** — per-run sub-agent output (gitignored; each run
-  regenerates fresh evidence).
-
-### How to run
-
-Dispatch each task in `tasks/` to a constrained sub-agent using the contract
-in `PROMPT.md`, collect the raw response into `results/F<n>.md`, then judge
-against `SCENARIOS.md`. See `SUMMARY.md` for the 2026-07-25 baseline
-(3 SUCCESS, 1 HANDLED, 2 PARTIAL, 6 FAILURE/OUT-OF-SCOPE — the failures are
-the *expected* finding, mapping the skill's hard limits).
-
-### What the benchmark covers
-
-JS-rendered SPAs, Cloudflare challenges, login walls, PDFs, paywalls,
-Wikipedia disambiguation, RTL scripts, TLS cert errors, rate limits,
-redirects, GraphQL/POST endpoints, non-ASCII URLs, static-HTML extraction.
+`benchmark/task.md` is a single self-contained file: the tasks, the
+sub-agent constraint contract (skill-only, no improvisation), the scoring
+rubric, the per-task expected outcomes and current baselines, and the list
+of hard limits that are *not* worth chasing (Cloudflare, login walls, PDFs,
+paywalls, GraphQL POST — these are out of the curl+text-tools paradigm).
 
 ## License
 
