@@ -109,6 +109,28 @@ curl -sL "https://raw.githubusercontent.com/OWNER/REPO/main/PATH" | head -80
 > greedy-only, so multiple `<script>` blocks make it delete all content
 > between the first opening and last closing tag.
 
+## Failure Benchmark
+
+`curl` + Unix text tools have hard limits. The `benchmarks/` directory
+contains a live, reproducible catalog of scenarios where this approach
+**fails** — so you can recognize the failure mode and switch tools instead
+of wasting time on the unscrapable.
+
+- **`benchmarks/SCENARIOS.md`** — 13 scenarios classified as 🔴 hard limit,
+  🟡 soft limit, ⚪ out of scope, or 🟢 already handled, each with a repro,
+  why-it-fails explanation, and a workaround.
+- **`benchmarks/run.sh`** — runs every scenario live and reports
+  PASS/FAIL/SKIP with observed evidence. Use it to regression-test the
+  catalog against current site behavior.
+
+```bash
+bash benchmarks/run.sh
+```
+
+Covers: JS-rendered SPAs, Cloudflare challenges, login walls, PDFs,
+paywalls, Wikipedia disambiguation, RTL scripts, TLS cert errors, rate
+limits, redirects, GraphQL/POST endpoints, non-ASCII URLs, and more.
+
 ## License
 
 MIT
