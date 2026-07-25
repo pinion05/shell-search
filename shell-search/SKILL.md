@@ -8,7 +8,7 @@ description: >-
   research is needed. Covers Wikipedia scraping, GitHub API queries, REST API
   consumption, multi-language comparison, and HTML table parsing.
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Shell Search — Web Research from the Terminal
@@ -76,19 +76,40 @@ en/ko/ja editions:
 grep -vE "doi:|PMID|ISBN|↑|Retrieved|Archived|function\(|RLCONF|RLSTATE|RLPAGEMODULES|mw-|skin-|vector-|client-|cdx-|wg[A-Z]|mw-parser-output|\.org/wiki|class=\""
 ```
 
-**Better — strip `<script>`/`<style>` blocks BEFORE `sed`:**
+**Better — strip `<script>`/`<style>` blocks BEFORE tag-stripping:**
+
+Real-world `<script>`/`<style>` blocks span **multiple lines** (a single
+Wikipedia RLCONF block can be thousands of chars across 2+ lines). `sed`
+processes input **line-by-line**, so `sed -E 's/<script.*<\/script>//'`
+only matches when the opening and closing tags sit on the *same* line —
+multiline JS/CSS bodies leak straight through. Use Python's `re.DOTALL`:
 
 ```bash
 curl -sL "https://ko.wikipedia.org/wiki/독도" \
-  | sed -E 's/<script[^>]*>.*<\/script>//g; s/<style[^>]*>.*<\/style>//g' \
-  | sed 's/<[^>]*>//g' \
-  | grep -i "키워드" | head -30
+  | python3 -c "
+import sys, re, html
+s = sys.stdin.read()
+# multiline-aware block removal (re.S = match across newlines)
+s = re.sub(r'<script[^>]*>.*?</script>', '', s, flags=re.S|re.I)
+s = re.sub(r'<style[^>]*>.*?</style>', '', s, flags=re.S|re.I)
+s = re.sub(r'<[^>]*>', '', s)            # now safe to strip remaining tags
+sys.stdout.write(html.unescape(s))
+" | grep -i "키워드" | head -30
 ```
 
+**One-liner alternatives** (no Python) if you prefer: `perl -0777 -pe
+'s/<script.*?<\/script>//gs; s/<style.*?<\/style>//gs'` (slurp mode), or
+GNU `sed -z 's/<script[^>]*>.*<\/script>//g'` (NUL-separated). Both read
+the whole input as one record so `.` matches newlines.
+
 **Hard-won lesson:** `sed 's/<[^>]*>//g'` removes *tags* but not the *text
-inside* `<script>`/`<style>`. After tag removal, that text becomes ordinary
-lines indistinguishable from article content. Always nuke script/style
-blocks first, then strip tags, then apply `grep -v` for what remains.
+inside* `<script>`/`<style>`. And bare `sed -E 's/<script>.*<\/script>//'`
+**looks** like it strips blocks but silently fails on multiline blocks —
+the JS/CSS body then surfaces as ordinary text after tag removal. Verified
+on `en.wikipedia.org/wiki/Conor_McGregor`: line-oriented `sed` leaks ~235
+lines of `RLCONF`/`function(){...}` that `re.DOTALL` correctly removes.
+Always use a multiline-aware tool (`re.S`, `perl -0777`, or `sed -z`), then
+strip tags, then `grep -v` residual noise.
 
 ### 1.3 HTML Entity Decoding
 
@@ -148,7 +169,12 @@ curl -sL "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=S
   | python3 -c "
 import sys, json, re, html
 d = json.load(sys.stdin)
-for r in d['query']['search']:
+results = d.get('query', {}).get('search', [])
+if not results:
+    # bad title, deleted page, API error — surface it instead of KeyError
+    if 'error' in d: print('ERROR:', d['error']); raise SystemExit(1)
+    print('(no results)'); raise SystemExit(0)
+for r in results:
     title = r['title']
     # search snippets contain <span class=\"searchmatch\">...</span> HTML plus entities
     snippet = html.unescape(re.sub(r'<[^>]*>', '', r['snippet']))
@@ -168,13 +194,18 @@ fetch full HTML (Phase 1) or intro extract (Phase 2.1).
 
 GitHub's search response is huge (every item ships full owner object, URLs,
 scores, timestamps). Pretty-printing it all burns context. Extract only what
-you need:
+you need — and **guard against error payloads** (rate-limit/`message`
+responses lack `items`, which would otherwise crash with a bare `KeyError`
+and hide GitHub's actual error text):
 
 ```bash
 curl -sL "https://api.github.com/search/repositories?q=QUERY&sort=stars&order=desc&per_page=5" \
   | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
+if 'items' not in d:
+    # rate-limited, bad query, etc. — show the server message, not a KeyError
+    print('ERROR:', d.get('message', d)); raise SystemExit(1)
 for r in d['items']:
     print(f\"{r['stargazers_count']:>7} ★  {r['full_name']}\")
     if r.get('description'):
@@ -182,10 +213,20 @@ for r in d['items']:
 "
 ```
 
-**Check remaining quota before bulk queries:**
+**Check remaining quota before bulk queries.** `/search/repositories` is
+charged against the **`search`** resource (10 req/min unauthenticated),
+*not* `core` (60 req/hr) — checking only `core` can show a healthy quota
+right before a search fails. Print both:
+
 ```bash
 curl -sL "https://api.github.com/rate_limit" \
-  | python3 -c "import sys,json; d=json.load(sys.stdin)['resources']['core']; print(f\"{d['remaining']}/{d['limit']}\")"
+  | python3 -c "
+import sys, json
+r = json.load(sys.stdin)['resources']
+c, s = r.get('core', {}), r.get('search', {})
+print('core', str(c.get('remaining'))+'/'+str(c.get('limit')),
+      ' search', str(s.get('remaining'))+'/'+str(s.get('limit')))
+"
 ```
 
 ### 2.4 GitHub API — Browse Repo Contents
@@ -224,21 +265,27 @@ zero HTML wrapper. Much cleaner than scraping the GitHub web UI.
 Compare how the same topic is described across language editions. **Apply the
 same noise filtering as Phase 1** — non-English wikis (ko/ja) have even more
 JS/CSS boilerplate relative to article length, so a bare `sed + grep` gets
-drowned in `RLCONF={...}` walls.
+drowned in `RLCONF={...}` walls. Use the multiline-aware cleaner from §1.2:
 
 ```bash
 # English version
 curl -sL "https://en.wikipedia.org/wiki/TOPIC_EN" \
-  | sed -E 's/<script[^>]*>.*<\/script>//g; s/<style[^>]*>.*<\/style>//g' \
-  | sed 's/<[^>]*>//g' \
-  | grep -ivE "doi:|PMID|RLCONF|RLSTATE|mw-|skin-|vector-|client-|wg[A-Z]" \
+  | python3 -c "
+import sys, re, html
+s = re.sub(r'<script[^>]*>.*?</script>', '', sys.stdin.read(), flags=re.S|re.I)
+s = re.sub(r'<style[^>]*>.*?</style>', '', s, flags=re.S|re.I)
+sys.stdout.write(html.unescape(re.sub(r'<[^>]*>', '', s)))
+" | grep -ivE "doi:|PMID|RLCONF|RLSTATE|mw-|skin-|vector-|client-|wg[A-Z]" \
   | grep -i "KEYWORD" | head -30
 
 # Korean version
 curl -sL "https://ko.wikipedia.org/wiki/독도" \
-  | sed -E 's/<script[^>]*>.*<\/script>//g; s/<style[^>]*>.*<\/style>//g' \
-  | sed 's/<[^>]*>//g' \
-  | grep -ivE "doi:|PMID|RLCONF|RLSTATE|mw-|skin-|vector-|client-|wg[A-Z]" \
+  | python3 -c "
+import sys, re, html
+s = re.sub(r'<script[^>]*>.*?</script>', '', sys.stdin.read(), flags=re.S|re.I)
+s = re.sub(r'<style[^>]*>.*?</style>', '', s, flags=re.S|re.I)
+sys.stdout.write(html.unescape(re.sub(r'<[^>]*>', '', s)))
+" | grep -ivE "doi:|PMID|RLCONF|RLSTATE|mw-|skin-|vector-|client-|wg[A-Z]" \
   | grep -i "영토\|분쟁\|일본" | head -30
 ```
 
@@ -332,26 +379,35 @@ grep -iE "activation-synthesis|threat simulation|memory consolidation|Freud|Jung
 | Empty output, `301`/`302` in `-w` | Missing `-L` (no redirect follow) | Always use `curl -sL` |
 | Wrong page silently returned | Redirect not followed | Use `-L`; inspect with `-w "%{http_code} %{url_effective}\n"` |
 | Empty output | Wrong URL encoding | URL-encode special chars; try `--data-urlencode` |
-| Wall of `RLCONF`/CSS noise | script/style bodies not removed | Strip `<script>`/`<style>` blocks before `sed` (§1.2) |
+| Wall of `RLCONF`/CSS noise | multiline `<script>`/`<style>` bodies survive `sed` | Use `re.DOTALL` / `perl -0777` / `sed -z` (§1.2) |
 | `Q&amp;A` / `&#39;` in text | Entities not decoded | `python3 -c "import html..."` (§1.3) |
 | Wall of noise | No `grep -v` filter | Always add noise filter (§1.2) |
 | Table parser returns 0 rows | `<tr>` literal; rows have attributes | Use `<tr[^>]*>` (§3.2) |
+| `KeyError: 'items'` / `'query'` hides real error | Extractor assumes happy-path schema | Guard for missing key, print `message`/`error` (§2.2, §2.3) |
 | Incomplete content | `head -N` too small | Increase to `head -150` or remove cap |
 | Garbled Unicode | Missing `LANG`/`UTF-8` | Add `--compressed` to curl |
 | 403 Forbidden | Missing User-Agent | Add `-H "User-Agent: Mozilla/5.0"` |
 | 404 on raw file | Wrong branch name | Default is `main`, not `master` |
-| GitHub `403 rate limit` | >60 req/hr unauthenticated | Check `/rate_limit`; add token header |
+| GitHub search fails despite healthy quota | Checked wrong bucket (`core` not `search`) | `/search/*` uses `search` resource (10/min); print both (§2.3) |
+| GitHub `403 rate limit` | core >60/hr or search >10/min unauthenticated | Check `/rate_limit`; add token header |
 
 ### 4.2 Anti-Patterns to Avoid
 
 ❌ **Forgetting `-L`** — Without redirect-following, you'll get the redirect
 page, not the content. This is the most common silent failure. Use `curl -sL`.
 
-❌ **`sed` only, no script/style stripping** — Tag-stripping leaves JS/CSS
-bodies as plain text. Remove `<script>`/`<style>` blocks first.
+❌ **`sed` for `<script>`/`<style>` blocks** — Tag-stripping leaves JS/CSS
+bodies as plain text, AND `sed -E 's/<script>.*<\/script>//'` only matches
+single-line blocks (sed is line-oriented). Use a multiline-aware tool:
+`re.DOTALL`, `perl -0777`, or GNU `sed -z`.
 
 ❌ **Skipping entity decode** — `&amp;` `&#39;` `&lt;` will corrupt your
 extracted text. Always finish with `html.unescape`.
+
+❌ **Indexing API JSON without a schema guard** — `d['items']` /
+`d['query']['search']` raise `KeyError` on error payloads (rate-limit,
+bad query), hiding the server's actual `message`. Always check for the
+expected key first and surface `d.get('message')` / `d.get('error')`.
 
 ❌ **Scraping when API exists** — Wikipedia API is always cleaner than HTML
 scraping. Use scraping only for specific sections or tables.
@@ -365,10 +421,11 @@ lines with no meaning. Always use `-B` and `-A`.
 ❌ **Fetching entire HTML to memory** — For very large pages, use `curl -o
 file.html` then process the file. Avoid context overflow.
 
-❌ **Ignoring rate limits** — GitHub's `core` resource allows 60 req/hr
-unauthenticated (verified: it is `core`, not a generic "60/hr" — search uses
-`search` resource, separate quota). Add
-`-H "Authorization: token YOUR_TOKEN"` for 5000/hr.
+❌ **Checking the wrong rate-limit bucket** — `/search/*` charges GitHub's
+`search` resource (10/min unauthenticated), separate from `core` (60/hr).
+A preflight on `core` alone can look healthy while the next search fails.
+Print both buckets. Add `-H "Authorization: token YOUR_TOKEN"` for
+core 5000/hr + search 30/min.
 
 ---
 
@@ -378,38 +435,52 @@ unauthenticated (verified: it is `core`, not a generic "60/hr" — search uses
 # ═══ Wikipedia Summary (cleanest) ═══
 curl -sL "https://en.wikipedia.org/w/api.php?action=query&titles=TOPIC&prop=extracts&exintro&format=json&explaintext" | python3 -m json.tool
 
-# ═══ Wikipedia Search (find page, snippets cleaned) ═══
+# ═══ Wikipedia Search (find page, snippets cleaned, error-safe) ═══
 curl -sL "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=QUERY&format=json" | python3 -c "
 import sys,json,re,html
-for r in json.load(sys.stdin)['query']['search']:
-    print(f\"- {r['title']}: {html.unescape(re.sub(r'<[^>]*>','',r['snippet']))[:120]}\")"
+d=json.load(sys.stdin); r=d.get('query',{}).get('search',[])
+if not r:
+    print('ERROR:', d.get('error','(no results)')); raise SystemExit(1)
+for x in r: print('- '+x['title']+': '+html.unescape(re.sub(r'<[^>]*>','',x['snippet']))[:120])"
 
-# ═══ Wikipedia Deep Dive (HTML + script/style strip + grep + entity decode) ═══
+# ═══ Wikipedia Deep Dive (HTML + multiline script/style strip + grep + entity decode) ═══
 curl -sL "https://en.wikipedia.org/wiki/TOPIC" \
-  | sed -E 's/<script[^>]*>.*<\/script>//g; s/<style[^>]*>.*<\/style>//g' \
-  | sed 's/<[^>]*>//g' \
+  | python3 -c "
+import sys,re,html
+s=sys.stdin.read()
+s=re.sub(r'<script[^>]*>.*?</script>','',s,flags=re.S|re.I)
+s=re.sub(r'<style[^>]*>.*?</style>','',s,flags=re.S|re.I)
+sys.stdout.write(html.unescape(re.sub(r'<[^>]*>','',s)))" \
   | grep -vE "doi:|PMID|ISBN|RLCONF|RLSTATE|mw-|skin-|vector-|client-" \
-  | grep -i -B2 -A5 "KEYWORD" \
-  | python3 -c "import sys,html; print(html.unescape(sys.stdin.read()))" \
-  | head -80
+  | grep -i -B2 -A5 "KEYWORD" | head -80
 
-# ═══ GitHub Search (stars + name + description only) ═══
+# ═══ GitHub Search (stars + name + description only, error-safe) ═══
 curl -sL "https://api.github.com/search/repositories?q=QUERY&sort=stars&order=desc&per_page=5" | python3 -c "
 import sys,json
-for r in json.load(sys.stdin)['items']:
-    print(f\"{r['stargazers_count']:>7} ★  {r['full_name']}\")
-    if r.get('description'): print(f\"         {r['description'][:100]}\")"
+d=json.load(sys.stdin)
+if 'items' not in d: print('ERROR:', d.get('message',d)); raise SystemExit(1)
+for r in d['items']:
+    print(str(r['stargazers_count']).rjust(7)+' ★  '+r['full_name'])
+    if r.get('description'): print('         '+r['description'][:100])"
 
-# ═══ GitHub Rate Limit Check ═══
-curl -sL "https://api.github.com/rate_limit" | python3 -c "import sys,json; d=json.load(sys.stdin)['resources']['core']; print(f\"{d['remaining']}/{d['limit']}\")"
+# ═══ GitHub Rate Limit Check (both buckets) ═══
+curl -sL "https://api.github.com/rate_limit" | python3 -c "
+import sys,json
+r=json.load(sys.stdin)['resources']; c=r.get('core',{}); s=r.get('search',{})
+print('core', str(c.get('remaining'))+'/'+str(c.get('limit')),
+      ' search', str(s.get('remaining'))+'/'+str(s.get('limit')))"
 
 # ═══ GitHub Raw File ═══
 curl -sL "https://raw.githubusercontent.com/OWNER/REPO/main/PATH" | head -80
 
-# ═══ Generic Web Page ═══
+# ═══ Generic Web Page (multiline-aware) ═══
 curl -sL -H "User-Agent: Mozilla/5.0" "https://example.com/page" \
-  | sed -E 's/<script[^>]*>.*<\/script>//g; s/<style[^>]*>.*<\/style>//g' \
-  | sed 's/<[^>]*>//g' | grep -i "KEYWORD" | head -50
+  | python3 -c "
+import sys,re,html
+s=sys.stdin.read()
+for t in ('script','style'): s=re.sub(r'<'+t+r'[^>]*>.*?</'+t+r'>','',s,flags=re.S|re.I)
+sys.stdout.write(html.unescape(re.sub(r'<[^>]*>','',s)))" \
+  | grep -i "KEYWORD" | head -50
 ```
 
 ---
