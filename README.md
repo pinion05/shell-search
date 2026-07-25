@@ -6,12 +6,13 @@
 
 `shell-search` is a skill that teaches Claude (or any SKILL.md-compatible agent) how to search, scrape, parse, and synthesize information from the web — **without a browser**. It covers:
 
-- **Wikipedia scraping** (HTML + grep patterns)
-- **Wikipedia API queries** (clean JSON extracts & search)
-- **GitHub API queries** (repo search, contents browsing, raw file fetch)
+- **Wikipedia scraping** (HTML + script/style strip + grep patterns)
+- **Wikipedia API queries** (clean JSON extracts & search, with snippet cleaning)
+- **GitHub API queries** (repo search with field extraction, contents browsing, raw file fetch)
 - **Multi-language comparison** (cross-reference en/ko/ja editions)
 - **HTML table parsing** (Python regex wikitable extraction)
-- **Noise filtering** (battle-tested `grep -v` patterns)
+- **HTML entity decoding** (`html.unescape` for `&amp;` `&#39;`)
+- **Noise filtering** (battle-tested `grep -v` patterns + script/style removal)
 - **Progressive refinement pipeline** (4-step research flow)
 
 ## Quick Start
@@ -26,7 +27,7 @@ git clone https://github.com/pinion05/shell-search.git ~/.claude/skills/shell-se
 
 ```bash
 mkdir -p ~/.claude/skills/shell-search
-curl -s https://raw.githubusercontent.com/pinion05/shell-search/main/shell-search/SKILL.md \
+curl -sL https://raw.githubusercontent.com/pinion05/shell-search/main/shell-search/SKILL.md \
   -o ~/.claude/skills/shell-search/SKILL.md
 ```
 
@@ -35,7 +36,7 @@ curl -s https://raw.githubusercontent.com/pinion05/shell-search/main/shell-searc
 ```
 shell-search/
 ├── shell-search/
-│   └── SKILL.md      # The skill definition
+│   └── SKILL.md      # The skill definition (v1.1.0)
 ├── README.md
 └── LICENSE
 ```
@@ -56,17 +57,36 @@ Claude will activate this skill when you ask things like:
 
 ```bash
 # Wikipedia clean summary (API)
-curl -s "https://en.wikipedia.org/w/api.php?action=query&titles=TOPIC&prop=extracts&exintro&format=json&explaintext" | python3 -m json.tool
+curl -sL "https://en.wikipedia.org/w/api.php?action=query&titles=TOPIC&prop=extracts&exintro&format=json&explaintext" | python3 -m json.tool
 
-# Wikipedia deep dive (HTML + grep + noise filter)
-curl -s "https://en.wikipedia.org/wiki/TOPIC" | sed 's/<[^>]*>//g' | grep -v "doi:\|PMID\|ISBN\|function()\|RLCONF\|mw-\|vector-" | grep -i -B2 -A5 "KEYWORD" | head -80
+# Wikipedia search with cleaned snippets (strip <span class="searchmatch"> + entities)
+curl -sL "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=QUERY&format=json" | python3 -c "
+import sys,json,re,html
+for r in json.load(sys.stdin)['query']['search']:
+    print(f\"- {r['title']}: {html.unescape(re.sub(r'<[^>]*>','',r['snippet']))[:120]}\")"
 
-# GitHub repo search
-curl -s "https://api.github.com/search/repositories?q=QUERY&sort=stars&order=desc&per_page=5" | python3 -m json.tool
+# Wikipedia deep dive (HTML + script/style strip + grep + entity decode)
+curl -sL "https://en.wikipedia.org/wiki/TOPIC" \
+  | sed -E 's/<script[^>]*>.*<\/script>//g; s/<style[^>]*>.*<\/style>//g' \
+  | sed 's/<[^>]*>//g' \
+  | grep -vE "doi:|PMID|ISBN|RLCONF|RLSTATE|mw-|skin-|vector-|client-" \
+  | grep -i -B2 -A5 "KEYWORD" \
+  | python3 -c "import sys,html; print(html.unescape(sys.stdin.read()))" \
+  | head -80
+
+# GitHub repo search (extract only stars + name + description)
+curl -sL "https://api.github.com/search/repositories?q=QUERY&sort=stars&order=desc&per_page=5" | python3 -c "
+import sys,json
+for r in json.load(sys.stdin)['items']:
+    print(f\"{r['stargazers_count']:>7} ★  {r['full_name']}\")
+    if r.get('description'): print(f\"         {r['description'][:100]}\")"
 
 # GitHub raw file
-curl -s "https://raw.githubusercontent.com/OWNER/REPO/main/PATH" | head -80
+curl -sL "https://raw.githubusercontent.com/OWNER/REPO/main/PATH" | head -80
 ```
+
+> **Why `-sL` everywhere?** Sites (Wikipedia, GitHub) issue `301`/`302` redirects.
+> Without `-L`, curl silently returns the redirect page instead of the content.
 
 ## License
 
