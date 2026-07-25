@@ -36,7 +36,9 @@ curl -sL https://raw.githubusercontent.com/pinion05/shell-search/main/shell-sear
 ```
 shell-search/
 ├── shell-search/
-│   └── SKILL.md      # The skill definition (v1.1.1)
+│   └── SKILL.md      # The skill definition (v1.1.1) — users use this
+├── benchmark/
+│   └── task.md       # Iterative improvement tool for SKILL.md (improvers)
 ├── README.md
 └── LICENSE
 ```
@@ -108,6 +110,24 @@ curl -sL "https://raw.githubusercontent.com/OWNER/REPO/main/PATH" | head -80
 > `.` matches newlines, and `.*?` is non-greedy. Avoid `sed -z`: GNU sed is
 > greedy-only, so multiple `<script>` blocks make it delete all content
 > between the first opening and last closing tag.
+
+## Benchmark (for improvers)
+
+`benchmark/task.md` is an **iterative improvement tool** for the skill — not
+an absolute grade. It measures the skill's information-access capability so
+you can edit `shell-search/SKILL.md`, re-run, and verify the change helped.
+
+- **Users** can ignore `benchmark/` entirely — `shell-search/SKILL.md` is
+  all you need.
+- **Improvers** run `benchmark/task.md` against their changes: the current
+  baseline is **12 / 39**. A change is an improvement if the total goes up
+  *and* no task regresses.
+
+`benchmark/task.md` is a single self-contained file: the tasks, the
+sub-agent constraint contract (skill-only, no improvisation), the scoring
+rubric, the per-task expected outcomes and current baselines, and the list
+of hard limits that are *not* worth chasing (Cloudflare, login walls, PDFs,
+paywalls, GraphQL POST — these are out of the curl+text-tools paradigm).
 
 ## License
 
