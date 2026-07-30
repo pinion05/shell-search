@@ -8,7 +8,7 @@ description: >-
   research is needed. Covers Wikipedia scraping, GitHub API queries, REST API
   consumption, multi-language comparison, and HTML table parsing.
 metadata:
-  version: "1.1.1"
+  version: "1.3.0"
 ---
 
 # Shell Search — Web Research from the Terminal
@@ -262,6 +262,119 @@ curl -sL "https://raw.githubusercontent.com/mxyhi/ok-skills/main/exa-search/SKIL
 **Hard-won lesson:** `raw.githubusercontent.com` returns raw file content with
 zero HTML wrapper. Much cleaner than scraping the GitHub web UI.
 
+### 2.6 Reddit — RSS Feeds (Posts & Comments)
+
+Reddit's `.json` endpoints now require OAuth — `curl` gets `403`. But the
+`.rss` (Atom XML) feeds still work unauthenticated and parse cleanly. Use
+these instead of `.json`.
+
+**Subreddit posts:**
+```bash
+curl -sL -H "User-Agent: research-script/1.0" "https://www.reddit.com/r/SUBREDDIT/.rss" \
+  | python3 -c "
+import sys, re, html, xml.etree.ElementTree as ET
+ns = {'a': 'http://www.w3.org/2005/Atom'}
+root = ET.fromstring(sys.stdin.read())
+for e in root.findall('a:entry', ns):
+    title = (e.find('a:title', ns).text or '').strip()
+    author_el = e.find('a:author/a:name', ns)
+    author = author_el.text if author_el is not None else '?'
+    print(f'{author}: {title}')
+"
+```
+
+**Post comments** — append `.rss` to the post's permalink:
+```bash
+curl -sL -H "User-Agent: research-script/1.0" \
+  "https://www.reddit.com/r/SUBREDDIT/comments/POSTID/POST_TITLE/.rss" \
+  | python3 -c "
+import sys, re, html, xml.etree.ElementTree as ET
+ns = {'a': 'http://www.w3.org/2005/Atom'}
+root = ET.fromstring(sys.stdin.read())
+for e in root.findall('a:entry', ns):
+    author_el = e.find('a:author/a:name', ns)
+    author = author_el.text if author_el is not None else '?'
+    content_el = e.find('a:content', ns)
+    content_html = content_el.text if content_el is not None else ''
+    text = html.unescape(re.sub(r'<[^>]+>', '', content_html)).strip()
+    if text and 'submitted by' not in text:  # skip the OP entry
+        print(f'{author}: {text[:200]}')
+"
+```
+
+**URL pattern:** take any `https://www.reddit.com/r/X/comments/Y/title/`
+permalink and add `.rss` at the end.
+
+**Hard-won lessons:**
+- **`.json` is dead, `.rss` is alive.** Reddit gated `.json` behind OAuth;
+  `.rss` still works without auth. Verify with `curl -sL -o /dev/null
+  -w "%{http_code}"` — `200` for RSS, `403` for `.json`.
+- **Rate limit is real (~per-IP).** Rapid back-to-back `.rss` calls get
+  `429`. Space calls ~60–90s apart, or one feed at a time. The
+  User-Agent matters — a generic `Mozilla/5.0` is more likely to be
+  blocked than a descriptive custom one.
+- **Comments feed is partial.** A thread's `.rss` returns the first page
+  of comments (~10–25), not every reply. For exhaustive comment trees you
+  need the authenticated API — out of scope for this skill.
+- **Skip the OP entry.** The comments feed's first `<entry>` is the post
+  itself (its `content` starts with "submitted by"); filter it as shown.
+- **Some `<content>` fields are empty** (deleted/removed comments). Guard
+  with `content_el.text or ''` — bare `.text` raises `AttributeError`.
+
+### 2.7 Wikipedia — Disambiguation Detection & Resolution
+
+A title like "Mercury" or "Java" is ambiguous. The §2.1 intro extract
+returns a *disambiguation list* ("Mercury most commonly refers to...") rather
+than an article — which looks like an answer but isn't one. Detect this and
+resolve to a single subject.
+
+**Step 1 — detect via `pageprops`:**
+```bash
+curl -sL "https://en.wikipedia.org/w/api.php?action=query&titles=TITLE&prop=pageprops&format=json" \
+  | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+page = list(d['query']['pages'].values())[0]
+pp = page.get('pageprops', {})
+if 'disambiguation' in pp:
+    print(f\"DISAMBIGUATION: '{page['title']}' is ambiguous; resolve a target before extracting\")
+else:
+    print(f\"ARTICLE: '{page['title']}' is a real article\")
+"
+```
+
+**Step 2 — if disambiguation, parse it and grab the first candidate:**
+```bash
+curl -sL "https://en.wikipedia.org/w/api.php?action=parse&page=TITLE&prop=text&format=json" \
+  | python3 -c "
+import sys, json, re
+d = json.load(sys.stdin)
+html_text = d['parse']['text']['*']
+links = re.findall(r'<a href=\"/wiki/([^\"]+)\"[^>]*>([^<]+)</a>', html_text)
+for href, label in links:
+    # skip special namespaces, lists, and other disambiguation pages
+    if ':' in href or href.startswith('List_') or '(disambiguation)' in href:
+        continue
+    print(href)  # first real article candidate
+    break
+"
+```
+
+**Step 3 — get the intro extract of the resolved candidate** using the §2.1
+pattern with the candidate title.
+
+**Hard-won lessons:**
+- **The disambiguation list is not an answer.** Without detection the agent
+  happily returns "Mercury (planet), Mercury (element)..." as if it were
+  a definition. Always check `pageprops` first when the user's term might
+  be ambiguous.
+- **First link is usually the primary topic** but not always — Wikipedia's
+  disambiguation ordering is editorial, not ranked. If the first candidate
+  seems wrong, surface 3-5 candidates and let the user pick.
+- **`pageprops` is one extra request.** Skip it only if you're sure the
+  title is unambiguous (e.g. an exact phrase the user quoted from a known
+  article).
+
 ---
 
 ## Phase 3: Advanced Strategies
@@ -394,6 +507,7 @@ grep -iE "activation-synthesis|threat simulation|memory consolidation|Freud|Jung
 | Garbled Unicode | Missing `LANG`/`UTF-8` | Add `--compressed` to curl |
 | 403 Forbidden | Missing User-Agent | Add `-H "User-Agent: Mozilla/5.0"` |
 | 404 on raw file | Wrong branch name | Default is `main`, not `master` |
+| `curl: (60) SSL certificate problem` / exit 60 | Server cert expired, self-signed, or CA mismatch | For a known test endpoint: `-k` (or `--insecure`) skips verification. For real sites: fix the server cert, or pin with `--cacert FILE`. Never use `-k` against sites you don't control |
 | GitHub search fails despite healthy quota | Checked wrong bucket (`core` not `search`) | `/search/*` uses `search` resource (10/min); print both (§2.3) |
 | GitHub `403 rate limit` | core >60/hr or search >10/min unauthenticated | Check `/rate_limit`; add token header |
 
@@ -463,6 +577,15 @@ sys.stdout.write(html.unescape(re.sub(r'<[^>]*>','',s)))" \
   | grep -vE "doi:|PMID|ISBN|RLCONF|RLSTATE|mw-|skin-|vector-|client-" \
   | grep -i -B2 -A5 "KEYWORD" | head -80
 
+# ═══ Wikipedia — detect disambiguation before extracting (§2.7) ═══
+curl -sL "https://en.wikipedia.org/w/api.php?action=query&titles=TITLE&prop=pageprops&format=json" | python3 -c "
+import sys,json
+p=list(json.load(sys.stdin)['query']['pages'].values())[0]
+print('DISAMBIG' if 'disambiguation' in p.get('pageprops',{}) else 'ARTICLE', ':', p['title'])"
+
+# ═══ Self-signed / expired TLS — -k skips verification (test endpoints only) ═══
+curl -skL "https://expired.badssl.com/" | sed 's/<[^>]*>//g' | head -20
+
 # ═══ GitHub Search (stars + name + description only, error-safe) ═══
 curl -sL "https://api.github.com/search/repositories?q=QUERY&sort=stars&order=desc&per_page=5" | python3 -c "
 import sys,json
@@ -481,6 +604,25 @@ print('core', str(c.get('remaining'))+'/'+str(c.get('limit')),
 
 # ═══ GitHub Raw File ═══
 curl -sL "https://raw.githubusercontent.com/OWNER/REPO/main/PATH" | head -80
+
+# ═══ Reddit Subreddit Posts (.rss — .json is 403 without OAuth) ═══
+curl -sL -H "User-Agent: research-script/1.0" "https://www.reddit.com/r/SUBREDDIT/.rss" \
+  | python3 -c "
+import sys, html, xml.etree.ElementTree as ET
+ns = {'a': 'http://www.w3.org/2005/Atom'}
+for e in ET.fromstring(sys.stdin.read()).findall('a:entry', ns):
+    a = e.find('a:author/a:name', ns)
+    print((a.text if a is not None else '?') + ': ' + (e.find('a:title', ns).text or ''))"
+
+# ═══ Reddit Post Comments (append .rss to permalink) ═══
+curl -sL -H "User-Agent: research-script/1.0" "https://www.reddit.com/r/X/comments/Y/Z/.rss" \
+  | python3 -c "
+import sys, re, html, xml.etree.ElementTree as ET
+ns = {'a': 'http://www.w3.org/2005/Atom'}
+for e in ET.fromstring(sys.stdin.read()).findall('a:entry', ns):
+    a = e.find('a:author/a:name', ns); c = e.find('a:content', ns)
+    t = html.unescape(re.sub(r'<[^>]+>', '', c.text or '')).strip()
+    if t and 'submitted by' not in t: print((a.text if a is not None else '?') + ': ' + t[:200])"
 
 # ═══ Generic Web Page (multiline-aware) ═══
 curl -sL -H "User-Agent: Mozilla/5.0" "https://example.com/page" \
